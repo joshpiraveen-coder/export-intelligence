@@ -1,0 +1,772 @@
+// Jaffna Basket Export Compliance Intelligence Platform
+// Prisma Schema - SQLite
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+
+// ─── AUTH / USERS ──────────────────────────────────────────────────────────────
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  COMPANY_ADMIN
+  EXPORT_MANAGER
+  VIEWER
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  role          UserRole  @default(VIEWER)
+  companyId     String?
+
+  accounts     Account[]
+  sessions     Session[]
+  company      Company?          @relation(fields: [companyId], references: [id])
+  assessments  ExportAssessment[]
+  aiConversations AIConversation[]
+  auditLogs    AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── COMPANY ───────────────────────────────────────────────────────────────────
+
+model Company {
+  id          String  @id @default(cuid())
+  name        String
+  slug        String  @unique
+  logo        String?
+  website     String?
+  address     String?
+  country     String?
+  phone       String?
+  email       String?
+  description String?
+  isActive    Boolean @default(true)
+
+  users       User[]
+  products    Product[]
+  bundles     Bundle[]
+  assessments ExportAssessment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── PRODUCT MANAGEMENT ────────────────────────────────────────────────────────
+
+model ProductCategory {
+  id          String  @id @default(cuid())
+  name        String
+  slug        String  @unique
+  description String?
+  parentId    String?
+  icon        String?
+
+  parent   ProductCategory?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children ProductCategory[] @relation("CategoryTree")
+  products Product[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Ingredient {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  description String?
+  isAllergen  Boolean @default(false)
+  casNumber   String?
+
+  productIngredients ProductIngredient[]
+  restrictions       Restriction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Allergen {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  code        String?
+  description String?
+  euRegulated Boolean @default(false)
+
+  products Product[] @relation("ProductAllergens")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Product {
+  id          String  @id @default(cuid())
+  name        String
+  sku         String? @unique
+  barcode     String?
+  description String?
+  images      String? // JSON array of image URLs
+  isActive    Boolean @default(true)
+
+  // Relations
+  companyId  String?
+  categoryId String?
+  company    Company?         @relation(fields: [companyId], references: [id])
+  category   ProductCategory? @relation(fields: [categoryId], references: [id])
+  allergens  Allergen[]       @relation("ProductAllergens")
+
+  // Basic info
+  manufacturer    String?
+  countryOfOrigin String?
+
+  // Food information
+  ingredients     String?  // Free text + structured
+  nutritionInfo   String?  // JSON
+  foodCategory    String?
+  shelfLifeDays   Int?
+  storageConditions String?
+  isOrganic       Boolean  @default(false)
+  isVegan         Boolean  @default(false)
+  isHalal         Boolean  @default(false)
+  isGlutenFree    Boolean  @default(false)
+
+  // Packaging
+  packageType     String?
+  packageMaterial String?
+  weightGrams     Float?
+  dimensionsCm    String?  // JSON {l, w, h}
+  qtyPerCarton    Int?
+
+  // Export information
+  hsCode          String?
+  customsDesc     String?
+  exportCategory  String?
+
+  // V5 Enterprise Fields
+  autoClassified     Boolean @default(false)
+  hsCodeConfidence   Float?
+  variants           String? // JSON
+  readinessScore     Float?
+  labelReadiness     Float?
+  packagingReadiness Float?
+  documentReadiness  Float?
+
+  // Packaging (extended)
+  grossWeightGrams     Float?
+  cartonDimensionsCm   String?  // JSON {l, w, h}
+  cartonWeightKg       Float?
+  palletQuantity       Int?
+  stackingInstructions String?
+  tamperSeal           Boolean  @default(false)
+  vacuumPacked         Boolean  @default(false)
+  labelLanguages       String?  // JSON array e.g. ["English","Tamil"]
+  recyclable           Boolean  @default(false)
+  recyclingCode        String?
+
+  // Composition flags
+  containsArtificialColours  Boolean @default(false)
+  containsArtificialFlavours Boolean @default(false)
+  containsPreservatives      Boolean @default(false)
+
+  // Export & compliance (extended)
+  temperatureRequirement String?
+  isSuitableForExport     Boolean @default(true)
+  countryRestrictionsNote String?
+  importRestrictionsNote  String?
+  certifications          String? // JSON: { HEALTH, PHYTOSANITARY, CERT_OF_ORIGIN, HALAL, ORGANIC, ISO_22000, HACCP, GMP, SLS, FDA, EU, UK, US, AUSTRALIA, CANADA, MIDDLE_EAST } each { status: "PENDING"|"CERTIFIED"|"NOT_APPLICABLE", certNumber, issuedDate, expiryDate }
+  exportLogistics         String? // JSON { riskLevel, shippingMethod, containerType, incoterms, unNumber, dangerousGoods, exportNotes }
+  aiMetadata              String? // JSON { commonAllergens, riskIngredients, customsKeywords, tradeKeywords, scientificNames, eNumbers, ingredientPercentages, nutritionSummary, restrictedIngredients, suggestedMarkets, likelyRejectedCountries, docsNeededCountries, shelfStabilityScore, complianceConfidenceScore, aiSummary }
+
+  // Relations
+  productIngredients ProductIngredient[]
+  bundleItems        BundleItem[]
+  complianceResults  ComplianceResult[]
+  restrictions       Restriction[]
+  pricing            ProductPricing?
+  qualityRecords     ProductQualityRecord[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([categoryId])
+  @@index([hsCode])
+}
+
+// ─── PRICING & COMMERCIAL INFORMATION ──────────────────────────────────────────
+
+model ProductPricing {
+  id        String @id @default(cuid())
+  productId String @unique
+
+  retailPriceLKR      Float?
+  wholesalePriceLKR    Float?
+  distributorPriceLKR  Float?
+  exportFobPriceUsd    Float?
+  cifPriceUsd          Float?
+  moq                  String? // Minimum Order Quantity
+  bulkDiscountTiers    String? // JSON array [{ minQty, discountPercent }]
+  currency             String  @default("LKR")
+  vatRate              Float?
+  productionCost       Float?
+  profitMargin         Float?
+  seasonalAvailability String?
+  leadTimeDays         Int?
+  monthlyCapacity      String?
+  annualCapacity       String?
+  paymentTerms         String?
+  acceptedPaymentMethods String? // JSON array
+  supplierCode         String?
+  batchCost            Float?
+  lastPriceUpdated     DateTime?
+  priceHistory         String? // JSON array [{ date, price }]
+  marketSegment        String? // Retail / Wholesale / Export
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── QUALITY ASSURANCE & TRACEABILITY ──────────────────────────────────────────
+
+model ProductQualityRecord {
+  id        String @id @default(cuid())
+  productId String
+
+  batchNumber             String?
+  manufacturingDate       DateTime?
+  expiryDate              DateTime?
+  bestBeforeDate          DateTime?
+  productionLine          String?
+  factoryLocation         String?
+  plantRegistrationNumber String?
+  inspectionStatus        String  @default("PENDING") // PENDING, IN_PROGRESS, PASSED, FAILED
+  qaInspector             String?
+  microbiologicalResults  String?
+  heavyMetalResults       String?
+  pesticideResidueResults String?
+  moistureContent         Float?
+  waterActivity           Float?
+  phValue                 Float?
+  brix                    Float?
+  packagingInspection     String?
+  metalDetectionStatus    String?
+  recallStatus            String  @default("NONE") // NONE, INITIATED, IN_PROGRESS, RESOLVED
+  traceabilityQrCode      String?
+  supplierTraceability    String?
+  rawMaterialSource       String?
+  internalAuditStatus     String?
+  externalAuditStatus     String?
+  capaRecords             String? // JSON array
+  nonConformanceReports   String? // JSON array
+  labCertificateUrls      String? // JSON array
+  qaNotes                 String?
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId])
+}
+
+model ProductIngredient {
+  id           String  @id @default(cuid())
+  productId    String
+  ingredientId String
+  percentage   Float?
+  isMain       Boolean @default(false)
+
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@unique([productId, ingredientId])
+}
+
+// ─── COUNTRY & REGULATIONS ─────────────────────────────────────────────────────
+
+model Country {
+  id         String  @id @default(cuid())
+  name       String  @unique
+  isoCode    String  @unique
+  iso3Code   String?
+  currency   String?
+  region     String?
+  subRegion  String?
+  flag       String?
+  isActive   Boolean @default(true)
+
+  // Authorities
+  customsAuthority   String?
+  foodAuthority      String?
+  importAuthority    String?
+  officialWebsite    String?
+
+  // Overview
+  importNotes        String?
+  generalRestrictions String?
+  prohibitedItems    String?
+
+  // Relations
+  authorities  Authority[]
+  regulations  Regulation[]
+  restrictions Restriction[]
+  certificates CountryCertificate[]
+  tariffs      Tariff[]
+  assessmentsTo ExportAssessment[] @relation("AssessmentDestination")
+  assessmentsFrom ExportAssessment[] @relation("AssessmentOrigin")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isoCode])
+  @@index([region])
+}
+
+model Authority {
+  id        String  @id @default(cuid())
+  countryId String
+  name      String
+  type      String  // CUSTOMS, FOOD_SAFETY, IMPORT, AGRICULTURE
+  website   String?
+  email     String?
+  phone     String?
+  address   String?
+
+  country Country @relation(fields: [countryId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum RegulatoryCategory {
+  FOOD_IMPORT
+  LABELING
+  PACKAGING
+  DOCUMENTATION
+  CERTIFICATION
+  CUSTOMS
+  PHYTOSANITARY
+  ANIMAL_HEALTH
+  ORGANIC
+  HALAL
+  RESTRICTED_INGREDIENTS
+  PROHIBITED
+  TARIFF
+}
+
+enum Severity {
+  INFO
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model Regulation {
+  id              String             @id @default(cuid())
+  countryId       String
+  category        RegulatoryCategory
+  productCategory String             @default("all") // applies to specific product category or "all"
+  title           String
+  description     String
+  requirement     String?
+  severity        Severity           @default(MEDIUM)
+  isProhibition   Boolean            @default(false)
+  
+  // V5 Enterprise Fields
+  version         String             @default("1.0")
+  provider        String             @default("MANUAL") // MANUAL, MOCK, OFFICIAL_API, COMMERCIAL_FEED
+  confidence      Float              @default(1.0)
+  authority       String?
+  supersededById  String?
+  status          String             @default("ACTIVE") // DRAFT, ACTIVE, RETIRED
+  
+  effectiveDate   DateTime?
+  expiryDate      DateTime?
+  sourceAuthority String?
+  sourceUrl       String?
+  notes           String?
+  isActive        Boolean            @default(true)
+
+  country Country @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  updates RegulationUpdate[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([countryId])
+  @@index([category])
+  @@index([productCategory])
+}
+
+model Restriction {
+  id           String   @id @default(cuid())
+  countryId    String
+  productId    String?
+  ingredientId String?
+  riskLevel    String   // GREEN, YELLOW, RED
+  reason       String
+  condition    String?
+  maxQuantity  Float?
+  unit         String?
+  requiresPermit Boolean @default(false)
+  permitAuthority String?
+  notes        String?
+
+  country    Country     @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  product    Product?    @relation(fields: [productId], references: [id])
+  ingredient Ingredient? @relation(fields: [ingredientId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([countryId])
+  @@index([productId])
+}
+
+model Certificate {
+  id          String  @id @default(cuid())
+  name        String
+  code        String  @unique
+  description String?
+  issuedBy    String?
+  validity    String? // e.g. "1 year", "per shipment"
+  notes       String?
+
+  countryCertificates CountryCertificate[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CountryCertificate {
+  id            String  @id @default(cuid())
+  countryId     String
+  certificateId String
+  isMandatory   Boolean @default(true)
+  productCategory String @default("all")
+  notes         String?
+
+  country     Country     @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  certificate Certificate @relation(fields: [certificateId], references: [id])
+
+  @@unique([countryId, certificateId, productCategory])
+}
+
+model HSCode {
+  id          String  @id @default(cuid())
+  code        String  @unique
+  description String
+  category    String?
+  notes       String?
+
+  tariffs Tariff[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Tariff {
+  id          String  @id @default(cuid())
+  countryId   String
+  hsCodeId    String?
+  hsCode      String?  // fallback if not linked
+  importDuty  Float?   // percentage
+  vat         Float?   // percentage
+  exciseDuty  Float?
+  otherLevy   Float?
+  notes       String?
+  effectiveDate DateTime?
+
+  country Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  hsCodeRef HSCode? @relation(fields: [hsCodeId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([countryId])
+}
+
+// ─── BUNDLES ───────────────────────────────────────────────────────────────────
+
+model Bundle {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  companyId   String?
+  isActive    Boolean @default(true)
+
+  company     Company?     @relation(fields: [companyId], references: [id])
+  items       BundleItem[]
+  assessments ExportAssessment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model BundleItem {
+  id        String @id @default(cuid())
+  bundleId  String
+  productId String
+  quantity  Int    @default(1)
+  notes     String?
+
+  bundle  Bundle  @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([bundleId, productId])
+}
+
+// ─── ASSESSMENT ENGINE ─────────────────────────────────────────────────────────
+
+enum AssessmentStatus {
+  DRAFT
+  ANALYZING
+  COMPLETED
+  FAILED
+}
+
+model ExportAssessment {
+  id            String           @id @default(cuid())
+  title         String?
+  status        AssessmentStatus @default(DRAFT)
+  userId        String
+  companyId     String?
+  destinationId String
+  originId      String?
+  bundleId      String?
+  notes         String?
+  shareToken    String?          @unique
+
+  // V5 Enterprise Fields
+  exportPort            String?
+  importPort            String?
+  complianceCost        String? // JSON { min, max, currency }
+  complianceTimeline    String? // JSON { days, details }
+  tradeAgreementApplies Boolean @default(false)
+  readinessScore        Float?
+  subScores             String? // JSON { docs, packaging, label }
+
+  // Analysis metadata
+  overallScore    Int?     // 0-100
+  riskLevel       String?  // GREEN, YELLOW, RED
+  analyzedAt      DateTime?
+  expiresAt       DateTime?
+
+  user        User     @relation(fields: [userId], references: [id])
+  company     Company? @relation(fields: [companyId], references: [id])
+  destination Country  @relation("AssessmentDestination", fields: [destinationId], references: [id])
+  origin      Country? @relation("AssessmentOrigin", fields: [originId], references: [id])
+  bundle      Bundle?  @relation(fields: [bundleId], references: [id])
+
+  items       AssessmentItem[]
+  results     ComplianceResult[]
+  warnings    ComplianceWarning[]
+  documents   Document[]
+  aiConversations AIConversation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([destinationId])
+  @@index([status])
+}
+
+model AssessmentItem {
+  id           String @id @default(cuid())
+  assessmentId String
+  productId    String
+  quantity     Int    @default(1)
+  unitWeight   Float?
+  totalWeight  Float?
+  notes        String?
+
+  assessment ExportAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
+
+model ComplianceResult {
+  id           String  @id @default(cuid())
+  assessmentId String
+  productId    String
+  score        Int     // 0-100
+  riskLevel    String  // GREEN, YELLOW, RED
+  isAllowed    Boolean @default(true)
+
+  // Structured results (JSON strings for SQLite)
+  requiredDocs    String? // JSON array
+  certificates    String? // JSON array
+  labelRequirements String? // JSON array
+  packagingNotes  String? // JSON array
+  customsNotes    String? // JSON array
+  recommendations String? // JSON array
+  regulationRefs  String? // JSON array
+
+  // V5 Enterprise Fields
+  resolutionChecklist  String? // JSON array of remediation actions
+  generatedDocuments   String? // JSON array of generated templates
+  optimizations        String? // JSON array of bundle optimizations
+  manualReviewRequired Boolean @default(false)
+  decisionExplanation  String? // JSON { why, regulation, changes, evidence }
+
+  assessment ExportAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  product    Product          @relation(fields: [productId], references: [id])
+  warnings   ComplianceWarning[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([assessmentId])
+}
+
+model ComplianceWarning {
+  id           String   @id @default(cuid())
+  assessmentId String
+  resultId     String?
+  severity     Severity @default(MEDIUM)
+  code         String?
+  title        String
+  description  String
+  remediation  String?
+  regulationId String?
+
+  assessment ExportAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  result     ComplianceResult? @relation(fields: [resultId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+// ─── DOCUMENTS ─────────────────────────────────────────────────────────────────
+
+enum DocumentType {
+  COMPLIANCE_REPORT
+  COMMERCIAL_INVOICE
+  PACKING_LIST
+  CUSTOMS_DECLARATION
+  EXPORT_CHECKLIST
+  CERTIFICATE_SUMMARY
+  AI_SUMMARY
+}
+
+model Document {
+  id           String       @id @default(cuid())
+  assessmentId String
+  type         DocumentType
+  title        String
+  content      String?      // JSON or HTML content
+  fileUrl      String?      // S3/R2 URL
+  format       String?      // pdf, xlsx, html
+  size         Int?
+
+  assessment ExportAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
+
+// ─── AI ────────────────────────────────────────────────────────────────────────
+
+model AIConversation {
+  id           String  @id @default(cuid())
+  userId       String
+  assessmentId String?
+  title        String?
+  messages     String  // JSON array of {role, content, timestamp}
+
+  user       User              @relation(fields: [userId], references: [id])
+  assessment ExportAssessment? @relation(fields: [assessmentId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── AUDIT & REGULATION UPDATES ────────────────────────────────────────────────
+
+model AuditLog {
+  id         String  @id @default(cuid())
+  userId     String?
+  action     String  // CREATE, UPDATE, DELETE, LOGIN, EXPORT, etc.
+  entity     String  // Product, Country, Regulation, etc.
+  entityId   String?
+  oldValues  String? // JSON
+  newValues  String? // JSON
+  ipAddress  String?
+  userAgent  String?
+  notes      String?
+
+  // V5 Enterprise Fields
+  regulationVersion String?
+  engineVersion     String?
+  aiExplanationVer  String?
+
+  user User? @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([entity])
+  @@index([createdAt])
+}
+
+model RegulationUpdate {
+  id           String   @id @default(cuid())
+  regulationId String
+  title        String
+  description  String
+  changeType   String   // ADDED, MODIFIED, REMOVED, CLARIFIED
+  source       String?
+  effectiveDate DateTime?
+  publishedBy  String?
+
+  regulation Regulation @relation(fields: [regulationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
